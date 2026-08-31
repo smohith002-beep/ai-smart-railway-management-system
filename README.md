@@ -90,6 +90,38 @@ npm run build
 
 ---
 
+## 📱 USB ANDROID SETUP (One-Click Installation)
+
+Deploy and run the authentic **Smart Railway Live Android App** on your physical phone over USB with a single command.
+
+### First-Time Phone Setup (Only 1 Minute):
+1. **Enable Developer Options**: Go to `Settings` -> `About Phone` -> Tap `Build Number` **7 times**.
+2. **Enable USB Debugging**: Go to `Settings` -> `Developer Options` -> Turn ON **USB Debugging**.
+3. **Connect to Laptop**: Connect your phone to your laptop using a standard USB data cable.
+4. **Authorize Connection**: Unlock your phone and tap **"Allow"** when the *"Allow USB debugging?"* prompt appears.
+
+### One-Click USB Build & Launch:
+Run either of the following commands in your terminal:
+```bash
+npm run android:usb
+```
+*or:*
+```bash
+npm run device:run
+```
+
+*(Windows users can also double-click `scripts\run-android-usb.bat`)*
+
+### What the Automated Script Does:
+1. Detects your connected Android device and checks authorization.
+2. Automatically sets up USB reverse port forwarding (`adb reverse tcp:5173 tcp:5173`).
+3. Compiles the web bundle and synchronizes Capacitor native plugins.
+4. Builds the native Android APK (`app-debug.apk`) via Gradle.
+5. Installs/updates the APK on your phone without losing data.
+6. Automatically launches **Smart Railway Live** directly on your phone's screen!
+
+---
+
 ## 📂 Project Structure
 
 ```text

@@ -65,10 +65,15 @@ export interface TrainPosition {
   speedKmph: number;
   headingDegrees: number;
   status: TrainStatus;
+  telemetryType?: 'EXACT_GPS' | 'STATION_REPORTED' | 'INTER_STATION_ESTIMATE' | 'OFFLINE_SCHEDULE';
   nextStationCode: string;
   nextStationName: string;
   previousStationCode: string;
   previousStationName: string;
+  lastReportedStationCode?: string;
+  lastReportedStationName?: string;
+  lastReportedTime?: string;
+  locationMessage?: string;
   delayMinutes: number;
   source: string;
   receivedAt: string;        // ISO timestamp when server received data
@@ -77,6 +82,8 @@ export interface TrainPosition {
   freshnessState: FreshnessState;
   distanceCoveredKm: number;
   totalDistanceKm: number;
+  platformNumber?: string;
+  nextStationScheduledArrival?: string;
   currentTrackSection?: string;
   signalAspect?: 'GREEN' | 'DOUBLE_YELLOW' | 'YELLOW' | 'RED';
 }
@@ -95,6 +102,7 @@ export interface StationScheduleItem {
   haltMinutes: number;
   status: 'PASSED' | 'CURRENT' | 'UPCOMING';
   dayCount: number;
+  delayMinutes?: number;
 }
 
 export interface TrainDetails {

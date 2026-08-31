@@ -59,12 +59,24 @@ export class RailwayCopilotService {
       };
     }
 
-    // 3. Train Specific Position / Status Query (e.g. "where is train 22436", "is train 12952 delayed")
-    const trainNumMatch = query.match(/\b(22436|12952|20901|20607|12301|9001|\d{5})\b/i);
+    // 3. Train Specific Position / Status Query (e.g. "where is train 22436", "is train 12951 delayed", "status of Vande Bharat")
+    const trainNumMatch = query.match(/\b(\d{4,5}|DFCC-\d{4})\b/i);
+    let matchedTrainPos: TrainPosition | undefined;
+    let matchedTrainDetails: TrainDetails | undefined;
+
     if (trainNumMatch) {
       const trainNum = trainNumMatch[1];
-      const pos = context.trainPositions.find(p => p.trainNumber === trainNum || p.trainNumber.includes(trainNum));
-      const details = context.trainDetailsList.find(d => d.trainNumber === trainNum || d.trainNumber.includes(trainNum));
+      matchedTrainPos = context.trainPositions.find(p => p.trainNumber === trainNum || p.trainNumber.includes(trainNum));
+      matchedTrainDetails = context.trainDetailsList.find(d => d.trainNumber === trainNum || d.trainNumber.includes(trainNum));
+    } else {
+      // Try name matching
+      matchedTrainPos = context.trainPositions.find(p => qLower.includes(p.trainName.toLowerCase()));
+      matchedTrainDetails = context.trainDetailsList.find(d => qLower.includes(d.trainName.toLowerCase()));
+    }
+
+    if (matchedTrainPos || matchedTrainDetails) {
+      const pos = matchedTrainPos;
+      const details = matchedTrainDetails;
 
       if (pos) {
         const speedText = `${pos.speedKmph} km/h`;
@@ -83,8 +95,8 @@ export class RailwayCopilotService {
             timestamp: pos.providerTimestamp
           }],
           suggestedActions: [
-            `Track ${pos.trainNumber} on 3D View`,
-            `Open Route Map for ${pos.trainNumber}`,
+            `Track ${pos.trainNumber} on Map`,
+            `Inspect Details for ${pos.trainNumber}`,
             `Inspect Assigned Crew`
           ]
         };
@@ -98,7 +110,11 @@ export class RailwayCopilotService {
           citations: [{
             trainNumber: details.trainNumber,
             dataSource: 'DATABASE_TRAIN_REGISTRY'
-          }]
+          }],
+          suggestedActions: [
+            `Track ${details.trainNumber} on Map`,
+            `Inspect Details for ${details.trainNumber}`
+          ]
         };
       }
     }

@@ -1,0 +1,16 @@
+# ===============================================================
+# AI SMART RAILWAY MANAGEMENT SYSTEM - ROBOTS.TXT
+# ===============================================================
+User-agent: *
+Allow: /
+Allow: /trains
+Allow: /stations
+Allow: /map
+Allow: /cinematic
+Allow: /booking
+Allow: /train/
+Allow: /station/
+Disallow: /simulation
+Disallow: /audit
+
+Sitemap: https://smartrailway.in/sitemap.xml

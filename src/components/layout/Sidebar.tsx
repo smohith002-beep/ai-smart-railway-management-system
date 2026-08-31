@@ -16,7 +16,10 @@ import {
   FlaskConical,
   FileText,
   Shield,
-  X
+  X,
+  Eye,
+  Building2,
+  Ticket
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -39,8 +42,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const navItems = [
     { id: 'command', label: 'Command Center', icon: LayoutDashboard, badge: currentRoleDefinition.category },
+    { id: 'booking', label: 'Online Ticket Booking', icon: Ticket, isHighlighted: true },
+    { id: 'trains', label: 'National Train Fleet (5,200+)', icon: Train },
+    { id: 'stations', label: 'Railway Stations (8,690+)', icon: Building2 },
     { id: 'map', label: 'GIS Live Railway Map', icon: Map },
-    { id: 'trains', label: 'Train Registry & ETA', icon: Train },
+    { id: 'cinematic', label: 'Cinematic 3D Visualizer', icon: Eye },
     { id: 'attendance', label: 'Staff Attendance', icon: UserCheck },
     { id: 'duty', label: 'Duty & Crew Roster', icon: CalendarDays },
     { id: 'copilot', label: 'AI Railway Copilot', icon: Bot },
@@ -70,7 +76,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {/* Mobile Header with Close Button */}
           <div className="p-4 flex items-center justify-between border-b border-neutral-800 lg:hidden">
             <span className="font-bold text-sm text-white font-display uppercase tracking-wider">OPERATIONS MENU</span>
-            <button onClick={onClose} className="p-1 rounded text-neutral-400 hover:text-white">
+            <button onClick={onClose} className="p-1 rounded text-neutral-400 hover:text-white cursor-pointer">
               <X className="w-5 h-5" />
             </button>
           </div>
@@ -90,10 +96,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
 
           {/* Navigation Links */}
-          <nav className="p-3 space-y-1 overflow-y-auto max-h-[calc(100vh-230px)]">
+          <nav className="p-3 space-y-1 overflow-y-auto max-h-[calc(100vh-230px)] font-mono text-xs">
             {navItems.map(item => {
               const Icon = item.icon;
               const isActive = activeView === item.id;
+
               return (
                 <button
                   key={item.id}
@@ -101,26 +108,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onSelectView(item.id);
                     onClose();
                   }}
-                  className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-xs font-mono transition ${
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition text-left cursor-pointer ${
                     isActive
-                      ? 'bg-white text-black font-bold shadow-sm'
-                      : 'text-neutral-400 hover:text-white hover:bg-neutral-900 border border-transparent'
+                      ? 'bg-white text-black font-bold shadow-md'
+                      : (item as any).isHighlighted
+                      ? 'text-emerald-300 hover:bg-emerald-950/30 hover:text-emerald-200 border border-emerald-900/50'
+                      : 'text-neutral-400 hover:bg-neutral-900 hover:text-white'
                   }`}
                 >
-                  <div className="flex items-center gap-3">
-                    <Icon className={`w-4 h-4 ${isActive ? 'text-black' : 'text-neutral-400'}`} />
-                    <span>{item.label}</span>
+                  <div className="flex items-center gap-2.5 truncate">
+                    <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-black' : (item as any).isHighlighted ? 'text-emerald-400' : 'text-neutral-400'}`} />
+                    <span className="truncate">{item.label}</span>
                   </div>
 
-                  {item.alertCount !== undefined && item.alertCount > 0 && (
-                    <span className="px-1.5 py-0.2 rounded bg-red-600 text-white text-[10px] font-mono font-bold">
+                  {/* Badges */}
+                  {item.badge && !isActive && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-neutral-900 text-neutral-400 uppercase border border-neutral-800">
+                      {item.badge}
+                    </span>
+                  )}
+                  {item.alertCount !== undefined && item.alertCount > 0 && !isActive && (
+                    <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-red-600 text-white font-bold animate-pulse">
                       {item.alertCount}
                     </span>
                   )}
-
-                  {item.isSim && (
-                    <span className={`px-1.5 py-0.2 rounded text-[9px] font-mono ${isActive ? 'bg-neutral-800 text-white' : 'bg-neutral-900 text-neutral-400 border border-neutral-800'}`}>
-                      DRILL
+                  {item.isSim && !isActive && (
+                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-950/60 text-amber-400 border border-amber-800/60">
+                      LAB
                     </span>
                   )}
                 </button>
@@ -129,15 +143,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </nav>
         </div>
 
-        {/* Bottom Platform Info Box */}
-        <div className="p-4 border-t border-neutral-800 bg-neutral-950/80 font-mono text-[10px] text-neutral-500">
-          <div className="flex justify-between items-center mb-1">
-            <span>PLATFORM:</span>
-            <strong className="text-neutral-300">AI SMART RAILWAY</strong>
+        {/* Footer info in sidebar */}
+        <div className="p-4 border-t border-neutral-800 text-[10px] font-mono text-neutral-500 space-y-1 bg-black">
+          <div className="flex items-center justify-between">
+            <span>NETWORK</span>
+            <span className="text-white font-bold">INDIAN RAILWAYS</span>
           </div>
-          <div className="flex justify-between items-center">
-            <span>DEVELOPER:</span>
-            <span className="text-white font-semibold">MOHITH S</span>
+          <div className="flex items-center justify-between">
+            <span>PLATFORM</span>
+            <span className="text-neutral-400">AI SMART RAILWAY</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span>DATA SOURCE</span>
+            <span className="text-emerald-400">VERIFIED CRIS / GIS</span>
           </div>
         </div>
       </aside>

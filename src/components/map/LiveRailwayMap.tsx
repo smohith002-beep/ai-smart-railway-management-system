@@ -1,15 +1,31 @@
-import React, { useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, Tooltip, useMap } from 'react-leaflet';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import { TrainPosition, RailwayStation } from '../../types/railway';
+import { TrainPosition, RailwayStation, TrainDetails, StationScheduleItem } from '../../types/railway';
 import {
   Gauge,
   Navigation,
   Clock,
   Train,
   ChevronRight,
-  Search
+  Search,
+  Radio,
+  Compass,
+  MapPin,
+  Sparkles,
+  Layers,
+  AlertCircle,
+  RefreshCw,
+  Info,
+  CheckCircle2,
+  Calendar,
+  ExternalLink,
+  ArrowRight,
+  Eye
 } from 'lucide-react';
+import { nationalTrainDatabaseService } from '../../services/railwayApi/nationalTrainDatabaseService';
+import { findRealTrain, getStationByCode } from '../../services/railwayApi/realIndianRailwaysDataset';
+import { IrctcBookingService } from '../../services/booking/irctcBookingService';
 
 interface LiveRailwayMapProps {
   trainPositions: TrainPosition[];
@@ -18,44 +34,105 @@ interface LiveRailwayMapProps {
   onSelectTrain: (trainNumber: string) => void;
   onSelectStation: (stationCode: string) => void;
   onInspectDetails?: (trainNumber: string) => void;
+  onRefreshLiveStatus?: (trainNumber: string) => Promise<any>;
 }
 
-// Minimalist Monochrome Train Marker Icon Generator
+// Minimalist Monochrome Train Marker Icon Generator with Telemetry Type Classification
 const createTrainIcon = (train: TrainPosition, isSelected: boolean) => {
   const isDelayed = train.delayMinutes > 5;
-  const statusDotClass = isDelayed ? 'bg-amber-400 status-dot-warning' : 'bg-emerald-400 status-dot-live';
+  const isGps = train.telemetryType === 'EXACT_GPS';
+  
+  let dotColorClass = 'bg-amber-400 status-dot-warning';
+  if (isGps) {
+    dotColorClass = isDelayed ? 'bg-amber-400 status-dot-warning' : 'bg-emerald-400 status-dot-live';
+  } else if (train.telemetryType === 'STATION_REPORTED') {
+    dotColorClass = isDelayed ? 'bg-amber-500' : 'bg-sky-400';
+  }
 
   return L.divIcon({
     className: 'custom-train-marker',
     html: `
       <div class="relative flex items-center justify-center cursor-pointer">
-        <div class="w-8 h-8 rounded-full bg-[#000000] border ${isSelected ? 'border-white ring-2 ring-white scale-110' : 'border-neutral-700'} flex items-center justify-center shadow-lg transition-transform hover:scale-125">
+        <div class="w-9 h-9 rounded-full bg-[#000000] border-2 ${isSelected ? 'border-white ring-4 ring-white/30 scale-125' : 'border-neutral-600'} flex items-center justify-center shadow-2xl transition-transform hover:scale-125">
           <svg class="w-4 h-4 text-white" style="transform: rotate(${train.headingDegrees}deg);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="12 2 19 21 12 17 5 21 12 2" fill="#FFFFFF" fill-opacity="0.9"/>
+            <polygon points="12 2 19 21 12 17 5 21 12 2" fill="#FFFFFF" fill-opacity="0.95"/>
           </svg>
         </div>
-        <span class="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full ${statusDotClass}"></span>
-        <div class="absolute -bottom-5 whitespace-nowrap px-1.5 py-0.2 rounded bg-black/90 border border-neutral-800 text-[9px] font-mono text-white shadow">
+        <span class="absolute -top-1 -right-1 w-3 h-3 rounded-full ${dotColorClass} border border-black"></span>
+        <div class="absolute -bottom-5 whitespace-nowrap px-1.5 py-0.5 rounded bg-black/95 border border-neutral-700 text-[10px] font-mono text-white shadow-lg">
           ${train.trainNumber}
         </div>
       </div>
     `,
-    iconSize: [32, 32],
-    iconAnchor: [16, 16],
-    popupAnchor: [0, -18]
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
+    popupAnchor: [0, -20]
   });
 };
 
-// Minimalist Monochrome Station Marker Icon Generator
+// Route Station Progression Marker Generator
+const createRouteStationIcon = (stationName: string, code: string, status: 'PASSED' | 'CURRENT' | 'UPCOMING') => {
+  const isPassed = status === 'PASSED';
+  const isCurrent = status === 'CURRENT';
+
+  if (isCurrent) {
+    return L.divIcon({
+      className: 'custom-route-station-current',
+      html: `
+        <div class="relative flex items-center justify-center">
+          <div class="w-5 h-5 rounded-full bg-emerald-500 animate-ping absolute opacity-60"></div>
+          <div class="w-5 h-5 rounded-full bg-black border-2 border-emerald-400 flex items-center justify-center shadow-lg relative z-10">
+            <div class="w-2 h-2 rounded-full bg-emerald-400"></div>
+          </div>
+          <div class="absolute -bottom-4 whitespace-nowrap px-1 rounded bg-black/90 text-[9px] font-mono text-emerald-300 font-bold border border-emerald-800">
+            ${code}
+          </div>
+        </div>
+      `,
+      iconSize: [20, 20],
+      iconAnchor: [10, 10]
+    });
+  }
+
+  if (isPassed) {
+    return L.divIcon({
+      className: 'custom-route-station-passed',
+      html: `
+        <div class="flex items-center justify-center">
+          <div class="w-3.5 h-3.5 rounded-full bg-neutral-900 border border-neutral-600 flex items-center justify-center">
+            <div class="w-1.5 h-1.5 rounded-full bg-neutral-400"></div>
+          </div>
+        </div>
+      `,
+      iconSize: [14, 14],
+      iconAnchor: [7, 7]
+    });
+  }
+
+  return L.divIcon({
+    className: 'custom-route-station-upcoming',
+    html: `
+      <div class="flex items-center justify-center">
+        <div class="w-4 h-4 rounded-full bg-black border-2 border-white flex items-center justify-center shadow">
+          <div class="w-1.5 h-1.5 rounded-full bg-white"></div>
+        </div>
+      </div>
+    `,
+    iconSize: [16, 16],
+    iconAnchor: [8, 8]
+  });
+};
+
+// General Station Node Marker Generator
 const createStationIcon = (station: RailwayStation) => {
-  const isTerminal = station.category === 'TERMINAL';
-  const size = isTerminal ? 8 : 6;
+  const isTerminal = station.category === 'TERMINAL' || station.category === 'MAJOR_JUNCTION';
+  const size = isTerminal ? 5 : 3.5;
 
   return L.divIcon({
     className: 'custom-station-marker',
     html: `
-      <div class="flex items-center justify-center">
-        <div style="width: ${size * 2}px; height: ${size * 2}px; background: #000000; border: 2px solid #FFFFFF;" class="rounded-full shadow-md flex items-center justify-center">
+      <div class="flex items-center justify-center opacity-70 hover:opacity-100 transition-opacity">
+        <div style="width: ${size * 2}px; height: ${size * 2}px; background: #000000; border: 1.5px solid #FFFFFF;" class="rounded-full shadow-md flex items-center justify-center">
           <div style="width: ${size}px; height: ${size}px; background: #FFFFFF;" class="rounded-full"></div>
         </div>
       </div>
@@ -66,11 +143,29 @@ const createStationIcon = (station: RailwayStation) => {
 };
 
 // Map Recenter Controller component
-const MapRecenter: React.FC<{ center: [number, number]; zoom?: number }> = ({ center, zoom = 6 }) => {
+const MapRecenter: React.FC<{ center: [number, number]; zoom?: number }> = ({ center, zoom = 7 }) => {
   const map = useMap();
-  React.useEffect(() => {
+  useEffect(() => {
     map.flyTo(center, zoom, { duration: 1.2 });
   }, [center, zoom, map]);
+  return null;
+};
+
+// Viewport Boundary Controller for smooth rendering of 8,690+ stations
+const ViewportController: React.FC<{ onBoundsChange: (bounds: L.LatLngBounds, zoom: number) => void }> = ({ onBoundsChange }) => {
+  const map = useMapEvents({
+    moveend: () => {
+      onBoundsChange(map.getBounds(), map.getZoom());
+    },
+    zoomend: () => {
+      onBoundsChange(map.getBounds(), map.getZoom());
+    }
+  });
+
+  useEffect(() => {
+    onBoundsChange(map.getBounds(), map.getZoom());
+  }, [map, onBoundsChange]);
+
   return null;
 };
 
@@ -80,309 +175,371 @@ export const LiveRailwayMap: React.FC<LiveRailwayMapProps> = ({
   selectedTrainNumber,
   onSelectTrain,
   onSelectStation,
-  onInspectDetails
+  onInspectDetails,
+  onRefreshLiveStatus
 }) => {
-  const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [lastUpdateTime, setLastUpdateTime] = useState<string>(() => new Date().toLocaleTimeString());
+  const [isQuerying, setIsQuerying] = useState<boolean>(false);
+  const [currentBounds, setCurrentBounds] = useState<L.LatLngBounds | null>(null);
+  const [currentZoom, setCurrentZoom] = useState<number>(5);
 
-  const selectedTrain = trainPositions.find(p => p.trainNumber === selectedTrainNumber);
-
-  // Filtered train positions
-  const filteredTrains = trainPositions.filter(train => {
-    if (filterStatus === 'ON_TIME' && train.delayMinutes > 5) return false;
-    if (filterStatus === 'DELAYED' && train.delayMinutes <= 5) return false;
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      return (
-        train.trainNumber.toLowerCase().includes(q) ||
-        train.trainName.toLowerCase().includes(q) ||
-        train.nextStationName.toLowerCase().includes(q) ||
-        train.previousStationName.toLowerCase().includes(q)
-      );
+  // Update last update timestamp when train positions update
+  useEffect(() => {
+    if (trainPositions.length > 0) {
+      setLastUpdateTime(new Date().toLocaleTimeString());
     }
-    return true;
-  });
+  }, [trainPositions]);
 
-  // White Clean Railway Track Corridors
-  const railwayCorridors: { name: string; positions: [number, number][] }[] = [
-    // Delhi - Kanpur - Prayagraj - Varanasi - Howrah (Eastern Trunk)
-    {
-      name: 'Delhi - Howrah Main Trunk',
-      positions: [
-        [28.6425, 77.2205],
-        [26.4547, 80.3507],
-        [25.4497, 81.8282],
-        [25.3283, 82.9863],
-        [22.5840, 88.3426]
-      ]
-    },
-    // Delhi - Vadodara - Surat - Mumbai Central (Western Trunk)
-    {
-      name: 'Delhi - Mumbai Western Corridor',
-      positions: [
-        [28.6425, 77.2205],
-        [23.0274, 72.6012],
-        [22.3107, 73.1812],
-        [21.2049, 72.8406],
-        [18.9696, 72.8193]
-      ]
-    },
-    // Chennai - Bengaluru - Mysuru Line
-    {
-      name: 'Chennai - Bengaluru - Mysuru Line',
-      positions: [
-        [13.0827, 80.2755],
-        [12.9784, 77.5684],
-        [12.3164, 76.6457]
-      ]
+  // Combine stations from props and master database
+  const allStations = useMemo(() => {
+    const dbStations = nationalTrainDatabaseService.getAllStations();
+    return dbStations.length > stations.length ? dbStations : stations;
+  }, [stations]);
+
+  // Memoized Station Coordinates Cache (O(1) lookup map)
+  const stationCoordsMap = useMemo(() => {
+    const map = new Map<string, { lat: number; lng: number; name: string }>();
+    allStations.forEach(s => {
+      map.set(s.code.toUpperCase(), { lat: s.latitude, lng: s.longitude, name: s.name });
+    });
+    return map;
+  }, [allStations]);
+
+  // Validated and localized train positions (GPS fix or genuine reported station fallback)
+  const validTrainPositions = useMemo(() => {
+    return trainPositions.map(train => {
+      let lat = train.latitude;
+      let lng = train.longitude;
+
+      // If direct GPS coordinates are invalid, fall back to authentic reported station coordinates
+      if (!lat || !lng || isNaN(lat) || isNaN(lng) || (lat === 0 && lng === 0)) {
+        const stationFix =
+          (train.lastReportedStationCode && stationCoordsMap.get(train.lastReportedStationCode.toUpperCase())) ||
+          stationCoordsMap.get(train.nextStationCode.toUpperCase()) ||
+          stationCoordsMap.get(train.previousStationCode.toUpperCase());
+        if (stationFix) {
+          lat = stationFix.lat;
+          lng = stationFix.lng;
+        }
+      }
+
+      return {
+        ...train,
+        latitude: lat,
+        longitude: lng
+      };
+    }).filter(t => t.latitude && t.longitude && !isNaN(t.latitude) && !isNaN(t.longitude));
+  }, [trainPositions, stationCoordsMap]);
+
+  const selectedTrain = validTrainPositions.find(p => p.trainNumber === selectedTrainNumber);
+
+  // Fetch full route topology for the selected train
+  const selectedTrainRoute = useMemo(() => {
+    if (!selectedTrainNumber) return null;
+    const details = nationalTrainDatabaseService.getFullTrainDetails(selectedTrainNumber) || findRealTrain(selectedTrainNumber);
+    if (!details || !details.schedule || details.schedule.length < 2) return null;
+
+    const coordinates: [number, number][] = [];
+    const routeStationNodes: { code: string; name: string; lat: number; lng: number; status: 'PASSED' | 'CURRENT' | 'UPCOMING'; platform: string }[] = [];
+
+    details.schedule.forEach(st => {
+      const stObj = nationalTrainDatabaseService.getStationByCode(st.stationCode) || stationCoordsMap.get(st.stationCode.toUpperCase());
+      if (stObj) {
+        const lat = 'latitude' in stObj ? stObj.latitude : stObj.lat;
+        const lng = 'longitude' in stObj ? stObj.longitude : stObj.lng;
+        if (lat && lng && !isNaN(lat) && !isNaN(lng)) {
+          coordinates.push([lat, lng]);
+          routeStationNodes.push({
+            code: st.stationCode,
+            name: st.stationName,
+            lat,
+            lng,
+            status: st.status,
+            platform: st.platform || '1'
+          });
+        }
+      }
+    });
+
+    return {
+      details,
+      coordinates,
+      routeStationNodes
+    };
+  }, [selectedTrainNumber, stationCoordsMap]);
+
+  const handleManualTrainRefresh = async (trainNum: string) => {
+    if (onRefreshLiveStatus) {
+      setIsQuerying(true);
+      await onRefreshLiveStatus(trainNum);
+      setIsQuerying(false);
     }
-  ];
+  };
+
+  const handleBoundsChange = useCallback((bounds: L.LatLngBounds, zoom: number) => {
+    setCurrentBounds(bounds);
+    setCurrentZoom(zoom);
+  }, []);
+
+  // Filtered stations for smooth 60fps rendering (tiered by zoom and viewport)
+  const visibleStations = useMemo(() => {
+    const routeCodes = new Set(selectedTrainRoute?.routeStationNodes.map(r => r.code) || []);
+
+    if (currentZoom < 6) {
+      // At low zoom, only show major junctions/terminals plus route stops
+      return allStations.filter(s =>
+        s.category === 'TERMINAL' || s.category === 'MAJOR_JUNCTION' || routeCodes.has(s.code)
+      ).slice(0, 150);
+    }
+
+    if (!currentBounds) return allStations.slice(0, 100);
+
+    // Filter within map viewport
+    return allStations.filter(s => {
+      if (routeCodes.has(s.code)) return true;
+      return currentBounds.contains([s.latitude, s.longitude]);
+    }).slice(0, 300);
+  }, [allStations, currentBounds, currentZoom, selectedTrainRoute]);
+
+  // Filtered train positions based on search
+  const filteredTrains = useMemo(() => {
+    return validTrainPositions.filter(train => {
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        return (
+          train.trainNumber.toLowerCase().includes(q) ||
+          train.trainName.toLowerCase().includes(q) ||
+          train.nextStationName.toLowerCase().includes(q) ||
+          train.lastReportedStationName?.toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [validTrainPositions, searchQuery]);
+
+  const mapCenter: [number, number] = useMemo(() => {
+    if (selectedTrain && selectedTrain.latitude && selectedTrain.longitude) {
+      return [selectedTrain.latitude, selectedTrain.longitude];
+    }
+    if (selectedTrainRoute && selectedTrainRoute.coordinates.length > 0) {
+      const midIdx = Math.floor(selectedTrainRoute.coordinates.length / 2);
+      return selectedTrainRoute.coordinates[midIdx];
+    }
+    return [20.5937, 78.9629]; // Geographic center of India
+  }, [selectedTrain, selectedTrainRoute]);
 
   return (
-    <div className="relative w-full h-[620px] rounded-2xl overflow-hidden border border-neutral-800 shadow-2xl bg-black flex flex-col md:flex-row">
-      {/* Interactive Map Canvas */}
-      <div className="relative flex-1 h-full">
-        <MapContainer
-          center={[22.5, 78.5]}
-          zoom={5}
-          scrollWheelZoom={true}
-          className="w-full h-full"
-        >
-          {/* CartoDB Dark Matter Tiles */}
-          <TileLayer
-            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-            attribution='&copy; <a href="https://carto.com/">CARTO</a> | CRIS Telemetry'
-            maxZoom={18}
-          />
-
-          {/* Recenter to selected train if any */}
-          {selectedTrain && (
-            <MapRecenter center={[selectedTrain.latitude, selectedTrain.longitude]} zoom={8} />
-          )}
-
-          {/* Railway Tracks / Network Polylines in crisp white dashed styling */}
-          {railwayCorridors.map((corridor, idx) => (
-            <Polyline
-              key={idx}
-              positions={corridor.positions}
-              pathOptions={{
-                color: '#FFFFFF',
-                weight: 2.5,
-                opacity: 0.5,
-                dashArray: '6, 6'
-              }}
-            >
-              <Tooltip sticky>
-                <span className="font-mono text-xs text-white">{corridor.name}</span>
-              </Tooltip>
-            </Polyline>
-          ))}
-
-          {/* Railway Stations Markers */}
-          {stations.map(station => (
-            <Marker
-              key={station.id}
-              position={[station.latitude, station.longitude]}
-              icon={createStationIcon(station)}
-              eventHandlers={{
-                click: () => onSelectStation(station.code)
-              }}
-            >
-              <Popup>
-                <div className="p-2 font-sans bg-[#0D0D0D] text-white">
-                  <div className="flex items-center justify-between gap-3 mb-1">
-                    <span className="font-bold text-sm text-white">{station.name}</span>
-                    <span className="px-1.5 py-0.5 rounded bg-neutral-900 text-[10px] font-mono text-neutral-300 border border-neutral-800">
-                      {station.code}
-                    </span>
-                  </div>
-                  <div className="text-xs text-neutral-400 mb-2">
-                    {station.zone} Zone • {station.division} Division • {station.platformsCount} Platforms
-                  </div>
-                  <div className="text-[11px] font-mono text-neutral-300">
-                    Active Platforms: {station.platforms.filter(p => p.status === 'OCCUPIED').length} Occupied
-                  </div>
-                </div>
-              </Popup>
-            </Marker>
-          ))}
-
-          {/* Live Trains Markers */}
-          {filteredTrains.map(train => (
-            <Marker
-              key={train.id}
-              position={[train.latitude, train.longitude]}
-              icon={createTrainIcon(train, train.trainNumber === selectedTrainNumber)}
-              eventHandlers={{
-                click: () => onSelectTrain(train.trainNumber)
-              }}
-            >
-              <Popup>
-                <div className="p-2 font-sans max-w-xs bg-[#0D0D0D] text-white">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="font-bold text-sm text-white font-mono">{train.trainNumber}</span>
-                    <div className="flex items-center gap-1.5 text-[10px] font-mono">
-                      <span className={`w-2 h-2 rounded-full ${train.delayMinutes > 5 ? 'bg-amber-400' : 'bg-emerald-400'}`} />
-                      <span>{train.delayMinutes > 0 ? `+${train.delayMinutes}m DELAY` : 'RIGHT TIME'}</span>
-                    </div>
-                  </div>
-
-                  <div className="text-xs text-neutral-300 font-medium mb-2">{train.trainName}</div>
-
-                  <div className="grid grid-cols-2 gap-2 text-[11px] font-mono bg-black p-2 rounded border border-neutral-800 mb-2">
-                    <div>
-                      <div className="text-neutral-500">SPEED</div>
-                      <div className="text-white font-bold">{train.speedKmph} km/h</div>
-                    </div>
-                    <div>
-                      <div className="text-neutral-500">NEXT STOP</div>
-                      <div className="text-neutral-300 truncate">{train.nextStationName}</div>
-                    </div>
-                  </div>
-
-                  {onInspectDetails && (
-                    <button
-                      onClick={() => onInspectDetails(train.trainNumber)}
-                      className="w-full mt-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded bg-white text-black text-xs font-mono font-bold uppercase transition hover:bg-neutral-200"
-                    >
-                      <span>Inspect Telemetry</span>
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
-              </Popup>
-            </Marker>
-          ))}
-        </MapContainer>
-
-        {/* Map Top Floating Search & Filter Bar */}
-        <div className="absolute top-4 left-4 right-4 z-[400] flex flex-wrap items-center justify-between gap-3 pointer-events-none">
-          {/* Search Box */}
-          <div className="pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-xl bg-black/90 border border-neutral-800 backdrop-blur-md shadow-xl max-w-sm flex-1">
-            <Search className="w-4 h-4 text-neutral-500 shrink-0" />
+    <div className="relative w-full h-[620px] md:h-[720px] rounded-2xl overflow-hidden border border-neutral-800 bg-[#080808] shadow-2xl font-mono">
+      {/* 1. Master Top Overlay Bar */}
+      <div className="absolute top-4 left-4 right-4 z-[1000] flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 pointer-events-none">
+        {/* Search & Active Selection */}
+        <div className="flex items-center gap-2 pointer-events-auto max-w-md w-full">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
-              placeholder="Search train (e.g. 22436, Vande Bharat)..."
+              placeholder="Search train no, name or corridor..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              className="bg-transparent border-none text-xs text-white placeholder-neutral-500 focus:outline-none w-full font-mono"
+              className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-black/90 backdrop-blur-md border border-neutral-700 text-xs text-white placeholder:text-neutral-500 focus:outline-none focus:border-white shadow-xl"
             />
-          </div>
-
-          {/* Quick Status Filter Tabs */}
-          <div className="pointer-events-auto flex items-center gap-1 p-1 rounded-xl bg-black/90 border border-neutral-800 backdrop-blur-md text-xs font-mono">
-            {(['ALL', 'ON_TIME', 'DELAYED'] as const).map(st => (
+            {searchQuery && (
               <button
-                key={st}
-                onClick={() => setFilterStatus(st)}
-                className={`px-3 py-1 rounded-lg transition ${
-                  filterStatus === st
-                    ? 'bg-white text-black font-bold'
-                    : 'text-neutral-400 hover:text-white'
-                }`}
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-white text-xs cursor-pointer"
               >
-                {st === 'ALL' ? 'ALL' : st === 'ON_TIME' ? 'ON TIME' : 'DELAYED'}
+                ✕
               </button>
-            ))}
+            )}
           </div>
         </div>
 
-        {/* Map Legend */}
-        <div className="absolute bottom-4 left-4 z-[400] pointer-events-auto hidden sm:flex items-center gap-4 px-3 py-2 rounded-xl bg-black/90 border border-neutral-800 backdrop-blur-md text-[11px] font-mono text-neutral-400">
-          <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 status-dot-live" />
-            <span>Right Time</span>
+        {/* Global Telemetry & Status Badges */}
+        <div className="flex flex-wrap items-center gap-2 pointer-events-auto self-end md:self-auto">
+          <div className="px-3 py-1.5 rounded-xl bg-black/90 backdrop-blur-md border border-neutral-800 text-[11px] text-neutral-300 flex items-center gap-2 shadow-xl">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 status-dot-live" />
+            <span>CRIS LIVE TELEMETRY</span>
+            <span className="text-neutral-500">|</span>
+            <span>{lastUpdateTime}</span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-amber-500 status-dot-warning" />
-            <span>Delayed</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-white" />
-            <span>Station Node</span>
+
+          <div className="px-3 py-1.5 rounded-xl bg-black/90 backdrop-blur-md border border-neutral-800 text-[11px] text-neutral-300 shadow-xl hidden sm:flex items-center gap-1.5">
+            <Radio className="w-3.5 h-3.5 text-neutral-400" />
+            <span>STATIONS: <strong className="text-white">{allStations.length}</strong></span>
           </div>
         </div>
       </div>
 
-      {/* Side HUD Panel (Active Train Inspector) */}
-      {selectedTrain && (
-        <div className="w-full md:w-84 lg:w-96 bg-[#080808] border-t md:border-t-0 md:border-l border-neutral-800 p-5 flex flex-col justify-between overflow-y-auto z-10">
-          <div>
-            {/* Header */}
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Train className="w-4 h-4 text-white" />
-                <span className="text-xs font-mono text-neutral-400 uppercase">LIVE TELEMETRY HUD</span>
-              </div>
-              <div className="flex items-center gap-1.5 text-xs font-mono">
-                <span className={`w-2 h-2 rounded-full ${selectedTrain.delayMinutes > 5 ? 'bg-amber-400 status-dot-warning' : 'bg-emerald-400 status-dot-live'}`} />
-                <span className="text-white font-semibold">{selectedTrain.delayMinutes === 0 ? 'RIGHT TIME' : `+${selectedTrain.delayMinutes}m DELAY`}</span>
-              </div>
-            </div>
+      {/* 2. Leaflet Map Container */}
+      <MapContainer
+        center={mapCenter}
+        zoom={5}
+        scrollWheelZoom={true}
+        className="w-full h-full z-0"
+        style={{ background: '#0a0a0a' }}
+      >
+        <ViewportController onBoundsChange={handleBoundsChange} />
 
-            <h3 className="text-xl font-bold text-white font-display mb-1">
-              {selectedTrain.trainNumber}
-            </h3>
-            <p className="text-sm text-neutral-300 font-medium mb-4">
-              {selectedTrain.trainName}
-            </p>
+        {/* CartoDB Dark Matter Layer (Clean, 100% Free, No API key required) */}
+        <TileLayer
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          maxZoom={19}
+        />
 
-            {/* Speed & Heading Gauge Card */}
-            <div className="grid grid-cols-2 gap-3 mb-4 font-mono">
-              <div className="p-3 rounded-xl bg-black border border-neutral-800">
-                <div className="text-[10px] text-neutral-500 uppercase mb-1">Speed</div>
-                <div className="text-2xl font-black text-white">
-                  {selectedTrain.speedKmph} <span className="text-xs font-normal text-neutral-500">KM/H</span>
-                </div>
-              </div>
+        {selectedTrain && (
+          <MapRecenter center={[selectedTrain.latitude, selectedTrain.longitude]} zoom={8} />
+        )}
 
-              <div className="p-3 rounded-xl bg-black border border-neutral-800">
-                <div className="text-[10px] text-neutral-500 uppercase mb-1">Heading</div>
-                <div className="text-2xl font-black text-white">
-                  {selectedTrain.headingDegrees}° <span className="text-xs font-normal text-neutral-500">TRK</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Current Block Section */}
-            <div className="p-3 rounded-xl bg-black border border-neutral-800 text-xs font-mono mb-4">
-              <div className="text-neutral-500 mb-1">BLOCK SECTION:</div>
-              <div className="text-white font-semibold">{selectedTrain.currentTrackSection || 'Automatic Block Section'}</div>
-              <div className="mt-2 flex items-center justify-between text-[11px] pt-2 border-t border-neutral-900">
-                <span className="text-neutral-500">SIGNAL AHEAD:</span>
-                <strong className="text-emerald-400">{selectedTrain.signalAspect || 'GREEN (CLEAR)'}</strong>
-              </div>
-            </div>
-
-            {/* Progress Route */}
-            <div className="space-y-2 mb-4 font-mono text-xs">
-              <div className="flex items-center justify-between">
-                <span className="text-neutral-500">PREV STATION:</span>
-                <span className="text-neutral-200">{selectedTrain.previousStationName} ({selectedTrain.previousStationCode})</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-neutral-400 font-semibold">NEXT STATION:</span>
-                <span className="text-white font-bold">{selectedTrain.nextStationName} ({selectedTrain.nextStationCode})</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Footer Metadata */}
-          <div className="pt-4 border-t border-neutral-800">
-            <div className="text-[10px] font-mono text-neutral-500 mb-3 space-y-0.5">
-              <div>DATA SOURCE: <span className="text-neutral-300">{selectedTrain.source}</span></div>
-              <div>TIMESTAMP: <span className="text-neutral-300">{new Date(selectedTrain.providerTimestamp).toLocaleTimeString()}</span></div>
-            </div>
-
-            {onInspectDetails && (
-              <button
-                onClick={() => onInspectDetails(selectedTrain.trainNumber)}
-                className="w-full py-2.5 px-4 rounded-xl bg-white hover:bg-neutral-200 text-black font-mono font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition"
+        {/* Train Route Polyline */}
+        {selectedTrainRoute && selectedTrainRoute.coordinates.length > 1 && (
+          <>
+            <Polyline
+              positions={selectedTrainRoute.coordinates}
+              pathOptions={{
+                color: '#FFFFFF',
+                weight: 3.5,
+                opacity: 0.85,
+                dashArray: '6, 6'
+              }}
+            />
+            {/* Route Intermediate Station Markers */}
+            {selectedTrainRoute.routeStationNodes.map(stn => (
+              <Marker
+                key={`route_stn_${stn.code}`}
+                position={[stn.lat, stn.lng]}
+                icon={createRouteStationIcon(stn.name, stn.code, stn.status)}
+                eventHandlers={{
+                  click: () => onSelectStation(stn.code)
+                }}
               >
-                <span>View Timetable & Crew</span>
-                <ChevronRight className="w-4 h-4" />
+                <Tooltip direction="top" offset={[0, -10]} opacity={0.95}>
+                  <div className="font-mono text-[10px] p-1">
+                    <strong className="text-white">{stn.name}</strong> ({stn.code})
+                    <div className="text-neutral-400">Status: {stn.status} • PF {stn.platform}</div>
+                  </div>
+                </Tooltip>
+              </Marker>
+            ))}
+          </>
+        )}
+
+        {/* Background Network Station Nodes */}
+        {visibleStations.map(station => (
+          <Marker
+            key={`stn_${station.code}`}
+            position={[station.latitude, station.longitude]}
+            icon={createStationIcon(station)}
+            eventHandlers={{
+              click: () => onSelectStation(station.code)
+            }}
+          >
+            <Tooltip direction="top" offset={[0, -6]} opacity={0.9}>
+              <div className="font-mono text-[10px] p-1">
+                <strong>{station.name}</strong> ({station.code})
+                <div className="text-neutral-400">Zone: {station.zone}</div>
+              </div>
+            </Tooltip>
+          </Marker>
+        ))}
+
+        {/* Active Trains on Corridor */}
+        {filteredTrains.map(train => {
+          const isSelected = train.trainNumber === selectedTrainNumber;
+          return (
+            <Marker
+              key={train.trainNumber}
+              position={[train.latitude, train.longitude]}
+              icon={createTrainIcon(train, isSelected)}
+              eventHandlers={{
+                click: () => onSelectTrain(train.trainNumber)
+              }}
+            >
+              <Popup className="custom-dark-popup">
+                <div className="font-mono text-xs text-white p-2 min-w-[240px] space-y-2">
+                  <div className="flex items-center justify-between border-b border-neutral-700 pb-1.5">
+                    <div className="font-bold text-white flex items-center gap-1.5">
+                      <Train className="w-3.5 h-3.5 text-white" />
+                      <span>{train.trainNumber} - {train.trainName}</span>
+                    </div>
+                  </div>
+
+                  <div className="text-[11px] text-neutral-300 space-y-1">
+                    <div>LOCATION: <strong className="text-white">{train.locationMessage || train.lastReportedStationName || 'In Transit'}</strong></div>
+                    <div>SPEED: <strong className="text-white">{train.speedKmph} KM/H</strong></div>
+                    <div>DELAY: <strong className={train.delayMinutes > 5 ? 'text-amber-400' : 'text-emerald-400'}>{train.delayMinutes > 0 ? `+${train.delayMinutes}m` : '0m'}</strong></div>
+                    <div>NEXT: <strong className="text-white">{train.nextStationName}</strong></div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 pt-2 border-t border-neutral-800">
+                    <button
+                      onClick={() => onInspectDetails && onInspectDetails(train.trainNumber)}
+                      className="flex-1 py-1 px-2 rounded bg-neutral-800 hover:bg-neutral-700 text-[10px] font-bold uppercase transition"
+                    >
+                      Timetable
+                    </button>
+                    <button
+                      onClick={() => IrctcBookingService.openOfficialBooking({ trainNumber: train.trainNumber, trainName: train.trainName })}
+                      className="flex-1 py-1 px-2 rounded bg-emerald-600 hover:bg-emerald-500 text-black text-[10px] font-bold uppercase transition flex items-center justify-center gap-1"
+                    >
+                      <span>Book</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              </Popup>
+            </Marker>
+          );
+        })}
+      </MapContainer>
+
+      {/* 3. Bottom Slide-out Telemetry Inspector when a train is selected */}
+      {selectedTrain && (
+        <div className="absolute bottom-4 left-4 right-4 z-[1000] p-4 rounded-2xl bg-black/95 backdrop-blur-xl border border-neutral-700 shadow-2xl space-y-3">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-neutral-800">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-neutral-900 border border-neutral-700 flex items-center justify-center text-white shrink-0">
+                <Train className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-lg font-black text-white">{selectedTrain.trainNumber}</span>
+                  <span className="text-sm font-sans font-bold text-neutral-200">{selectedTrain.trainName}</span>
+                </div>
+                <div className="text-[11px] text-neutral-400 flex items-center gap-2">
+                  <span>{selectedTrain.locationMessage || selectedTrain.lastReportedStationName || 'In Transit'}</span>
+                  <span>•</span>
+                  <span>PF {selectedTrain.platformNumber || '1'}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-end sm:self-auto">
+              <button
+                onClick={() => handleManualTrainRefresh(selectedTrain.trainNumber)}
+                disabled={isQuerying}
+                className="p-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-neutral-300 hover:text-white transition cursor-pointer"
+                title="Poll Fresh Telemetry"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isQuerying ? 'animate-spin' : ''}`} />
               </button>
-            )}
+
+              <button
+                onClick={() => onInspectDetails && onInspectDetails(selectedTrain.trainNumber)}
+                className="px-3.5 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-neutral-200 text-xs font-bold uppercase transition cursor-pointer"
+              >
+                Inspect Fleet
+              </button>
+
+              <button
+                onClick={() => IrctcBookingService.openOfficialBooking({ trainNumber: selectedTrain.trainNumber, trainName: selectedTrain.trainName })}
+                className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold uppercase flex items-center gap-1.5 shadow transition cursor-pointer"
+              >
+                <span>Book IRCTC</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         </div>
       )}

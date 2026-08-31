@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Smart Railway Live</string>
+    <string name="title_activity_main">Smart Railway Live</string>
+    <string name="package_name">in.smartrailway.app</string>
+    <string name="custom_url_scheme">in.smartrailway.app</string>
+</resources>
